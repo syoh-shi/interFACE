@@ -59,7 +59,7 @@ class _CameraCoordinatorState extends State<CameraCoordinator> {
         try {
           final response = await http.post(
             Uri.parse(
-              'https://us-central1-eye-tracking-app-4ba74.cloudfunctions.net/detectFace',
+              'Cloud FunctionのエンドポイントURL',
             ),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({'image': base64Image}),
