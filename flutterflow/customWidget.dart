@@ -11,11 +11,10 @@ import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img; // Image processing library
-// 追加：HTTP通信用ライブラリ
 import 'package:http/http.dart' as http;
 
-class CameraCoordinator extends StatefulWidget {
-  const CameraCoordinator({
+class CameraLimitedDetector extends StatefulWidget {
+  const CameraLimitedDetector({
     Key? key,
     this.width,
     this.height,
@@ -25,12 +24,15 @@ class CameraCoordinator extends StatefulWidget {
   final double? height;
 
   @override
-  _CameraCoordinatorState createState() => _CameraCoordinatorState();
+  _CameraLimitedDetectorState createState() => _CameraLimitedDetectorState();
 }
 
-class _CameraCoordinatorState extends State<CameraCoordinator> {
+class _CameraLimitedDetectorState extends State<CameraLimitedDetector> {
   CameraController? controller;
   late Future<List<CameraDescription>> _cameras;
+
+  /// 撮影処理が進行中かどうかを表すフラグ
+  bool _isProcessingPhoto = false;
 
   @override
   void initState() {
@@ -39,10 +41,13 @@ class _CameraCoordinatorState extends State<CameraCoordinator> {
   }
 
   @override
-  void didUpdateWidget(covariant CameraCoordinator oldWidget) {
+  void didUpdateWidget(covariant CameraLimitedDetector oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // makeSolidPhotoフラグがtrueになると写真撮影
-    if (FFAppState().makeSolidPhoto) {
+
+    // makeSolidPhotoフラグがtrue、かつまだ撮影処理中でない場合のみ撮影
+    if (FFAppState().makeSolidPhoto && !_isProcessingPhoto) {
+      _isProcessingPhoto = true; // 撮影処理を始める
+
       controller!.takePicture().then((file) async {
         Uint8List fileAsBytes = await file.readAsBytes();
 
@@ -73,12 +78,10 @@ class _CameraCoordinatorState extends State<CameraCoordinator> {
             if (boundingPoly != null && boundingPoly['vertices'] != null) {
               List<dynamic> vertices = boundingPoly['vertices'];
 
-              // 頂点(x)の最小値と最大値を求める
               double minX = double.infinity;
               double maxX = -double.infinity;
 
               for (final v in vertices) {
-                // v['x'], v['y'] が数値として入っている
                 if (v['x'] != null) {
                   final xVal = v['x'].toDouble();
                   if (xVal < minX) minX = xVal;
@@ -87,8 +90,7 @@ class _CameraCoordinatorState extends State<CameraCoordinator> {
               }
 
               // 左右の中心Xを計算(整数に丸める)
-              final centerX = ((minX + maxX) / 2.0).round();
-
+              final centerX = ((minX + maxX) / 2.0 - 320.0).round();
               final priceCount = FFAppState().pictureCount;
 
               if (priceCount == null) {
@@ -97,8 +99,10 @@ class _CameraCoordinatorState extends State<CameraCoordinator> {
                   FFAppState().pictureCount = 1;
                 });
               } else {
+                final oldcenterX = await FFAppState().boundingBoxCenter;
                 // AppStateに保存 (BoundingBoxCenterはint想定)
                 FFAppState().update(() {
+                  FFAppState().boundingBoxCenterOld = oldcenterX;
                   FFAppState().boundingBoxCenter = centerX;
                   FFAppState().pictureCount += 1;
                 });
@@ -112,13 +116,14 @@ class _CameraCoordinatorState extends State<CameraCoordinator> {
           print('Error calling detectFace: $e');
         }
         // ▲▲▲ 追加箇所ここまで ▲▲▲
-
-        // 写真撮影フラグをリセット
+      }).catchError((error) {
+        print('Error taking picture: $error');
+      }).whenComplete(() {
+        // 写真撮影フラグと撮影処理中フラグをリセット
         FFAppState().update(() {
           FFAppState().makeSolidPhoto = false;
         });
-      }).catchError((error) {
-        print('Error taking picture: $error');
+        _isProcessingPhoto = false;
       });
     }
   }
@@ -156,9 +161,12 @@ class _CameraCoordinatorState extends State<CameraCoordinator> {
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.done) {
           if (snapshot.hasData && snapshot.data!.isNotEmpty) {
+            // コントローラ未初期化の場合のみ初期化
             if (controller == null) {
-              controller =
-                  CameraController(snapshot.data![0], ResolutionPreset.max);
+              controller = CameraController(
+                snapshot.data![0],
+                ResolutionPreset.max,
+              );
               controller!.initialize().then((_) {
                 if (!mounted) {
                   return;
